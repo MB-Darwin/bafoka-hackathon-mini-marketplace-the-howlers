@@ -1,7 +1,7 @@
 // src/services/whatsapp.service.ts
 import twilio from "twilio";
-import { env } from "../configs/env";
-import logger from "../utils/logger";
+import { env } from "../configs/env.ts";
+import logger from "../utils/logger.ts";
 import { WhatsAppServiceError } from "../middleware/error-handler.ts";
 
 type TwilioClient = ReturnType<typeof twilio>;
@@ -67,14 +67,14 @@ export class WhatsAppService implements IWhatsAppService {
   private readonly from: string; // whatsapp:+E164
 
   constructor(opts?: { client?: TwilioClient; fromNumber?: string }) {
-    assertString(env.TWILIO_ACCOUNT_SID, "TWILIO_ACCOUNT_SID");
+    assertString(env.TWILIO_ACCOUNT_ID, "TWILIO_ACCOUNT_SID");
     assertString(env.TWILIO_AUTH_TOKEN, "TWILIO_AUTH_TOKEN");
 
     const fromNumber = opts?.fromNumber ?? env.TWILIO_WHATSAPP_NUMBER;
     assertString(fromNumber, "TWILIO_WHATSAPP_NUMBER");
 
     this.client =
-      opts?.client ?? twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
+      opts?.client ?? twilio(env.TWILIO_ACCOUNT_ID, env.TWILIO_AUTH_TOKEN);
     this.from = ensureWhatsAppAddress(fromNumber);
   }
 
