@@ -22,3 +22,18 @@ export class WhatsAppServiceError extends Error {
     }
   }
 }
+
+export class BotServiceError extends Error {
+  public cause?: unknown;
+
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.name = 'BotServiceError';
+    if (options?.cause) {
+      this.cause = options.cause;
+    }
+    Error.captureStackTrace?.(this, BotServiceError);
+  }
+}
+
+// ...existing error classes...
