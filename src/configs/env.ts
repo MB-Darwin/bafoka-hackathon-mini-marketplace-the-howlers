@@ -14,6 +14,9 @@ export const env = createEnv({
     CORS_ORIGINS: z.string().optional(),
     SUPABASE_URL: z.url(),
     SUPABASE_KEY: z.string(),
+    TWILIO_ACCOUNT_SID: z.string(),
+    TWILIO_AUTH_TOKEN: z.string(),
+    TWILIO_WHATSAPP_NUMBER: z.string(), // e.g., "whatsapp:+14155238886"
   },
   runtimeEnv: process.env,
   emptyStringAsUndefined: true,
