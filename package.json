@@ -2,25 +2,41 @@
   "name": "mini-marketplace",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "src/server.ts",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "nodemon",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "packageManager": "pnpm@10.14.0",
   "devDependencies": {
+    "@types/compression": "^1.8.1",
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
+    "@types/helmet": "^4.0.0",
     "@types/node": "^24.3.0",
     "dotenv": "^17.2.1",
     "eslint": "^9.34.0",
     "express": "^5.1.0",
     "install": "^0.13.0",
     "nodemon": "^3.1.10",
+    "pino-pretty": "^13.1.1",
     "prettier": "^3.6.2",
     "ts-node": "^10.9.2",
+    "tsx": "^4.20.5",
     "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "@t3-oss/env-core": "^0.13.8",
+    "compression": "^1.8.1",
+    "cors": "^2.8.5",
+    "helmet": "^8.1.0",
+    "pino": "^9.9.0",
+    "pino-http": "^10.5.0",
+    "zod": "^4.1.3"
   }
 }
