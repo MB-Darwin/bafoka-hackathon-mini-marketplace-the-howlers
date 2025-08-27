@@ -12,14 +12,9 @@ export const env = createEnv({
       .default("info"),
     // Comma-separated origins, e.g. "https://myapp.com,https://admin.myapp.com"
     CORS_ORIGINS: z.string().optional(),
+    SUPABASE_URL: z.url(),
+    SUPABASE_KEY: z.string(),
   },
   runtimeEnv: process.env,
   emptyStringAsUndefined: true,
-  onValidationError: (error) => {
-    console.error(
-      "Invalid environment variables:",
-      error.flatten().fieldErrors
-    );
-    process.exit(1);
-  },
 });
