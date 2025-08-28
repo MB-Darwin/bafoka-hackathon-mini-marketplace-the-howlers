@@ -1,33 +1,24 @@
 // src/services/bot.service.ts
 import { WhatsAppService } from './whatsapp.service.js';
 import { UserSessionService, UserSession } from './user.service.ts';
-//import OrderService from './order.service.js';
-//import CartItem from './order.service.js';
-//import PaymentService from './payment.service.js';
-//import ShopService, { Shop, Product } from './shop.service.js';
-//import { BlockchainService } from './blockchain.service.js';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { supabase } from '../db/index.ts';
 import logger from '../utils/logger.ts';
-import { BotServiceError } from '../middleware/error-handler.ts';
-import {supabase } from '../db/index.ts';
+import { BotServiceError , ShopServiceError} from '../middleware/error-handler.ts';
+import { shopService, CreateShopData } from './shop.service.ts';
 
-interface InteractiveButtonReply {
-  id: string;
-}
-
-interface InteractiveListReply {
-  id: string;
-}
-
-interface Interactive {
-  buttonReply?: InteractiveButtonReply;
-  listReply?: InteractiveListReply;
-}
+interface InteractiveButtonReply { id: string; }
+interface InteractiveListReply { id: string; }
+interface Interactive { buttonReply?: InteractiveButtonReply; listReply?: InteractiveListReply; }
 
 interface IncomingMessageData {
-  from: string;
+  from?: string;
   text?: string;
   interactive?: Interactive;
+  raw?: Record<string, any>; // full Twilio payload optional
+  // Twilio-specific fields
+  From?: string;
+  Body?: string;
+  WaId?: string;
 }
 
 interface Community {
@@ -36,47 +27,20 @@ interface Community {
   displayName: string;
 }
 
-interface ButtonOption {
-  id: string;
-  title: string;
-}
-
-interface ListRow {
-  id: string;
-  title: string;
-  description?: string;
-}
-
-interface ListSection {
-  title: string;
-  rows: ListRow[];
-}
-
-interface ListMessage {
-  text: string;
-  buttonText: string;
-  sections: ListSection[];
-}
+interface ButtonOption { id: string; title: string; }
+interface ListRow { id: string; title: string; description?: string; }
+interface ListSection { title: string; rows: ListRow[]; }
+interface ListMessage { text: string; buttonText: string; sections: ListSection[]; }
 
 class BotService {
   private whatsappService: WhatsAppService;
   private userSessionService: UserSessionService;
-  //private orderService: OrderService;
-  //private paymentService: PaymentService;
- // private shopService: ShopService;
-  //private blockchainService: BlockchainService;
-
   public COMMUNITIES: Record<string, Community>;
   public FLOWS: Record<string, string>;
 
   constructor() {
     this.whatsappService = new WhatsAppService();
     this.userSessionService = new UserSessionService();
-    //this.orderService = new OrderService();
-    //this.paymentService = new PaymentService();
-    //this.shopService = new ShopService();
-    //this.blockchainService = new BlockchainService();
-
     
 
     this.COMMUNITIES = {
@@ -97,22 +61,30 @@ class BotService {
       BLOCKCHAIN_SETUP: 'blockchain_setup',
       BUYER_BROWSING: 'buyer_browsing',
       CHECKOUT: 'checkout',
+      SELLER_MENU: 'seller_menu',
+      BUYER_MENU: 'buyer_menu',
+      SHOP_NAME_INPUT: 'shop_name_input',
+SHOP_DESCRIPTION_INPUT: 'shop_description_input',
+SHOP_CATEGORY_SELECT: 'shop_category_select',
+SHOP_SETTINGS_CONFIG: 'shop_settings_config',
+SHOP_CONFIRMATION: 'shop_confirmation',
     };
   }
 
-  private async handleDefaultTextInput(phoneNumber: string, message: string, userSession: UserSession): Promise<void> {
-  await this.whatsappService.sendMessage(
-    phoneNumber,
-    `❓ Sorry, I didn't understand "${message}". Please use the menu or type "help" for assistance.`
-  );
-}
-
   /** -------------------- PROCESS INCOMING MESSAGE -------------------- */
-  public async processIncomingMessage(messageData: IncomingMessageData): Promise<void> {
+  public async processIncomingMessage(messageData: IncomingMessageData & Record<string, any>): Promise<void> {
     try {
-      const { from, text, interactive } = messageData;
-      const phoneNumber = from;
+      // Normalize phone number
+      const phoneNumber: string | undefined = messageData.from || messageData.From || messageData.WaId;
+      if (!phoneNumber) {
+        logger.error({ messageData }, 'No phone number found in incoming message.');
+        return;
+      }
 
+      const text = messageData.text || messageData.Body;
+      const interactive = messageData.interactive;
+
+      // Retrieve or create session
       let userSession: UserSession | null = await this.userSessionService.getSession(phoneNumber);
       if (!userSession) {
         userSession = await this.userSessionService.createSession(phoneNumber);
@@ -126,6 +98,7 @@ class BotService {
         }, { onConflict: 'phone' });
       }
 
+      // Handle interactive responses (keeping for backward compatibility)
       if (interactive) {
         return await this.handleInteractiveResponse(phoneNumber, interactive, userSession);
       }
@@ -133,12 +106,21 @@ class BotService {
       if (text) {
         return await this.handleTextMessage(phoneNumber, text.toLowerCase().trim(), userSession);
       }
+
+      // Log raw payload if no text or interactive content
+      logger.info({ messageData }, 'Received message with no text or interactive content.');
+
     } catch (error) {
       logger.error({ error }, 'Error processing incoming message:');
-      await this.whatsappService.sendMessage(
-        messageData.from,
-        '❌ Sorry, something went wrong. Please try again or type "help" for assistance.'
-      );
+      const phoneNumber = messageData.from || messageData.From;
+      if (!phoneNumber) {
+          logger.warn('Cannot send error message: phone number is missing');
+          return;
+      }
+       await this.whatsappService.sendMessage(
+          phoneNumber,
+          '❌ Sorry, something went wrong. Please try again or type "help" for assistance.'
+        );
     }
   }
 
@@ -151,31 +133,11 @@ class BotService {
       switch (responseId) {
         case 'seller_register': return await this.initiateCommunitySelection(phoneNumber, userSession, 'seller');
         case 'buyer_browse': return await this.initiateCommunitySelection(phoneNumber, userSession, 'buyer');
-
         case 'select_bameka': return await this.handleCommunitySelection(phoneNumber, userSession, 'BAMEKA');
         case 'select_batoufam': return await this.handleCommunitySelection(phoneNumber, userSession, 'BATOUFAM');
         case 'select_fondjomekwet': return await this.handleCommunitySelection(phoneNumber, userSession, 'FONDJOMEKWET');
-
-        case 'create_shop': return await this.handleShopCreation(phoneNumber, userSession);
-        case 'manage_shop': return await this.showShopManagement(phoneNumber, userSession);
-        case 'view_shop_stats': return await this.showShopStatistics(phoneNumber, userSession);
-        case 'add_product': return await this.initializeProductAddition(phoneNumber, userSession);
-        case 'manage_products': return await this.showProductManagement(phoneNumber, userSession);
-        case 'view_orders': return await this.showOrderManagement(phoneNumber, userSession);
-        case 'order_details': return await this.showOrderDetails(phoneNumber, userSession);
-        case 'update_order_status': return await this.handleOrderStatusUpdate(phoneNumber, userSession);
-        case 'setup_payments': return await this.initializePaymentSetup(phoneNumber, userSession);
-        case 'mobile_money_setup': return await this.handleMobileMoneySetup(phoneNumber, userSession);
-        case 'crypto_setup': return await this.handleCryptoSetup(phoneNumber, userSession);
-        case 'create_eos_account': return await this.handleEOSAccountCreation(phoneNumber, userSession);
-        case 'check_eos_balance': return await this.handleEOSBalanceCheck(phoneNumber, userSession);
-        case 'eos_transaction': return await this.handleEOSTransaction(phoneNumber, userSession);
-        //case 'browse_shops': return await this.showCommunityShopBrowser(phoneNumber, userSession);
-        //case 'view_products': return await this.showCommunityProductCatalog(phoneNumber, userSession);
-        //case 'add_to_cart': return await this.handleAddToCart(phoneNumber, userSession, interactive);
-        //case 'checkout': return await this.initializeCheckout(phoneNumber, userSession);
         case 'back_to_main': return await this.showMainMenu(phoneNumber);
-        case 'back': return await this.handleBackNavigation(phoneNumber, userSession);
+        case 'back': return await this.showMainMenu(phoneNumber);
         default: return await this.handleUnknownResponse(phoneNumber);
       }
     } catch (error) {
@@ -185,35 +147,57 @@ class BotService {
   }
 
   /** -------------------- HANDLE TEXT MESSAGE -------------------- */
-  private async handleTextMessage(phoneNumber: string, message: string, userSession: UserSession): Promise<void> {
-    try {
-      if (this.isGlobalCommand(message)) {
-        return await this.handleGlobalCommand(phoneNumber, message, userSession);
-      }
+ private async handleTextMessage(phoneNumber: string, message: string, userSession: UserSession): Promise<void> {
+  try {
+    // Global commands
+    if (['help', 'menu', 'start', '0'].includes(message)) {
+      return await this.showMainMenu(phoneNumber);
+    }
 
-      switch (userSession.currentFlow) {
-        case this.FLOWS.COMMUNITY_SELECTION:
-          return await this.handleCommunitySelectionText(phoneNumber, message, userSession);
-        case this.FLOWS.SELLER_REGISTRATION:
-          return await this.handleSellerRegistrationInput(phoneNumber, message, userSession);
-        case this.FLOWS.BUYER_REGISTRATION:
-          return await this.handleBuyerRegistrationInput(phoneNumber, message, userSession);
-        case this.FLOWS.SHOP_MANAGEMENT:
-          return await this.handleShopManagementInput(phoneNumber, message, userSession);
-        case this.FLOWS.PRODUCT_MANAGEMENT:
-          return await this.handleProductManagementInput(phoneNumber, message, userSession);
-        case this.FLOWS.PAYMENT_SETUP:
-          return await this.handlePaymentSetupInput(phoneNumber, message, userSession);
-        case this.FLOWS.BLOCKCHAIN_SETUP:
-          return await this.handleBlockchainSetupInput(phoneNumber, message, userSession);
-        case this.FLOWS.CHECKOUT:
-          return await this.handleCheckoutInput(phoneNumber, message, userSession);
-        default:
-          return await this.handleDefaultTextInput(phoneNumber, message, userSession);
-      }
-    } catch (error) {
-      logger.error(`Error handling text message in flow ${userSession.currentFlow}:`,);
-      throw new BotServiceError('Failed to process message', { cause: error });
+    switch (userSession.currentFlow) {
+      case this.FLOWS.MAIN_MENU:
+        return await this.handleMainMenuInput(phoneNumber, message, userSession);
+      
+      case this.FLOWS.COMMUNITY_SELECTION:
+        return await this.handleCommunitySelectionInput(phoneNumber, message, userSession);
+      
+      case this.FLOWS.SELLER_MENU:
+        return await this.handleSellerMenuInput(phoneNumber, message, userSession);
+      
+      case this.FLOWS.BUYER_MENU:
+        return await this.handleBuyerMenuInput(phoneNumber, message, userSession);
+      
+      // Shop creation flows
+      case this.FLOWS.SHOP_NAME_INPUT:
+      case this.FLOWS.SHOP_DESCRIPTION_INPUT:
+      case this.FLOWS.SHOP_CATEGORY_SELECT:
+      case this.FLOWS.SHOP_CONFIRMATION:
+        return await this.handleShopCreationFlow(phoneNumber, message, userSession);
+      
+      default:
+        await this.whatsappService.sendMessage(
+          phoneNumber,
+          `❓ Sorry, I didn't understand "${message}". Type "0" to return to main menu.`
+        );
+    }
+  } catch (error) {
+    logger.error({ error }, `Error handling text message in flow ${userSession.currentFlow}:`);
+    throw new BotServiceError('Failed to process message', { cause: error });
+  }
+}
+
+  /** -------------------- MAIN MENU HANDLING -------------------- */
+  private async handleMainMenuInput(phoneNumber: string, message: string, userSession: UserSession): Promise<void> {
+    switch (message) {
+      case '1':
+        return await this.initiateCommunitySelection(phoneNumber, userSession, 'seller');
+      case '2':
+        return await this.initiateCommunitySelection(phoneNumber, userSession, 'buyer');
+      default:
+        await this.whatsappService.sendMessage(
+          phoneNumber,
+          '❌ Invalid option. Please choose:\n1️⃣ for Seller\n2️⃣ for Buyer\n0️⃣ for Menu'
+        );
     }
   }
 
@@ -226,33 +210,53 @@ class BotService {
 
     const welcomeText = `🌍 Welcome to our Community Marketplace!
 
-Please select your community to access your local marketplace:
+Please select your community:
+1️⃣ 🏘️ BAMEKA
+2️⃣ 🏘️ BATOUFAM  
+3️⃣ 🏘️ FONDJOMEKWET
+0️⃣ 🏠 Main Menu
 
-Each community has its own voucher system that can only be used within that community.`;
+Reply with the number of your choice.`;
 
-    const buttons: ButtonOption[] = [
-      { id: 'select_bameka', title: '🏘️ BAMEKA' },
-      { id: 'select_batoufam', title: '🏘️ BATOUFAM' },
-      { id: 'select_fondjomekwet', title: '🏘️ FONDJOMEKWET' },
-    ];
+    await this.whatsappService.sendMessage(phoneNumber, welcomeText);
+  }
 
-    await this.whatsappService.sendButtonMessage(phoneNumber, welcomeText, buttons);
+  private async handleCommunitySelectionInput(phoneNumber: string, message: string, userSession: UserSession): Promise<void> {
+    const communityMap: Record<string, string> = {
+      '1': 'BAMEKA',
+      '2': 'BATOUFAM', 
+      '3': 'FONDJOMEKWET',
+      'bameka': 'BAMEKA',
+      'batoufam': 'BATOUFAM',
+      'fondjomekwet': 'FONDJOMEKWET',
+      'fondjo': 'FONDJOMEKWET'
+    };
+
+    if (message === '0') {
+      return await this.showMainMenu(phoneNumber);
+    }
+
+    const selectedCommunity = communityMap[message];
+    if (selectedCommunity) {
+      return await this.handleCommunitySelection(phoneNumber, userSession, selectedCommunity);
+    }
+
+    await this.whatsappService.sendMessage(
+      phoneNumber, 
+      '❌ Invalid selection. Please choose:\n1️⃣ BAMEKA\n2️⃣ BATOUFAM\n3️⃣ FONDJOMEKWET\n0️⃣ Main Menu'
+    );
   }
 
   private async handleCommunitySelection(phoneNumber: string, userSession: UserSession, communityName: string): Promise<void> {
     const community = this.COMMUNITIES[communityName];
     const pendingUserType = userSession.userData.pendingUserType;
-    let userType: "seller" | "buyer" | null = null;
-
-    if (pendingUserType === "seller" || pendingUserType === "buyer") {
-  userType = pendingUserType;
-      }
+    const userType = (pendingUserType === 'seller' || pendingUserType === 'buyer') ? pendingUserType : null;
 
     const updatedSession: Partial<UserSession> = {
       community: communityName,
       communityVoucher: community.voucher,
       userType,
-      currentFlow: userType === 'seller' ? this.FLOWS.SELLER_REGISTRATION : this.FLOWS.BUYER_REGISTRATION,
+      currentFlow: userType === 'seller' ? this.FLOWS.SELLER_MENU : this.FLOWS.BUYER_MENU,
       userData: { ...userSession.userData, community: communityName, communityDisplayName: community.displayName },
     };
 
@@ -278,261 +282,499 @@ Each community has its own voucher system that can only be used within that comm
       }, { onConflict: 'phone' });
 
       if (!existingUser) {
-        await this.whatsappService.sendMessage(phoneNumber, `🎁 Welcome! You have been allocated a default voucher balance of ${voucherBalance} ${community.voucher} to start shopping in your community!`);
+        await this.whatsappService.sendMessage(phoneNumber, `🎁 You have ${voucherBalance} ${community.voucher} to start shopping!`);
       }
+
+      if (userType === 'seller') {
+        return await this.showSellerMenu(phoneNumber, updatedSession as UserSession);
+      } else {
+        return await this.showBuyerMenu(phoneNumber, updatedSession as UserSession);
+      }
+
     } catch (error) {
       logger.error({ error }, 'Error updating user in Supabase:');
-     await this.whatsappService.sendMessage(phoneNumber, '❌ There was a problem saving your community selection. Please try again.');
+      await this.whatsappService.sendMessage(phoneNumber, '❌ Could not save your community selection. Try again.');
+    }
+  }
+
+  /** -------------------- SELLER MENU -------------------- */
+  private async showSellerMenu(phoneNumber: string, userSession: UserSession): Promise<void> {
+    const community = userSession.userData?.communityDisplayName || 'your community';
+    const menuText = `🏪 Welcome, ${community} Seller!
+
+Choose an option:
+1️⃣ 🏪 Create Shop
+2️⃣ ⚙️ Manage Shop
+3️⃣ 💳 Setup Payments
+4️⃣ 🔗 EOS Account
+0️⃣ 🏠 Main Menu
+
+Reply with the number of your choice.`;
+
+    await this.whatsappService.sendMessage(phoneNumber, menuText);
+  }
+
+ // In BotService class - update handleSellerMenuInput method:
+async handleSellerMenuInput(phoneNumber: string, message: string, userSession: UserSession): Promise<void> {
+  switch (message) {
+    case '1':
+      return await this.initiateShopCreation(phoneNumber, userSession);
+    
+    case '2':
+      return await this.handleManageShop(phoneNumber, userSession);
+    
+    case '3':
+      await this.whatsappService.sendMessage(phoneNumber, '💳 Setup Payments feature coming soon!');
+      return await this.showSellerMenu(phoneNumber, userSession);
+    
+    case '4':
+      await this.whatsappService.sendMessage(phoneNumber, '🔗 EOS Account setup feature coming soon!');
+      return await this.showSellerMenu(phoneNumber, userSession);
+    
+    case '0':
+      return await this.showMainMenu(phoneNumber);
+    
+    default:
+      await this.whatsappService.sendErrorMessage(
+        phoneNumber,
+        'Invalid option. Please choose 1-4 or 0 for main menu.',
+        false
+      );
+      return await this.showSellerMenu(phoneNumber, userSession);
+  }
+}
+
+async initiateShopCreation(phoneNumber: string, userSession: UserSession): Promise<void> {
+  try {
+    // Check if user already has a shop
+    const existingShop = await shopService.getShopByOwner(phoneNumber);
+    if (existingShop) {
+      await this.whatsappService.sendMessage(
+        phoneNumber,
+        `🏪 You already have a shop: *${existingShop.name}*\n\nChoose option 2 from the menu to manage your existing shop.`
+      );
+      return await this.showSellerMenu(phoneNumber, userSession);
     }
 
-    if (userType === 'seller') {
-  const sellerSession = await this.userSessionService.getSession(phoneNumber);
-  if (!sellerSession) {
-    // Stop execution if session is null
-  await this.whatsappService.sendMessage(
-      phoneNumber,
-      '❌ Unable to retrieve your session. Please try again.'
-    );
-    return;
-  }
-  return await this.initializeSellerFlow(phoneNumber, sellerSession);
-} else {
-  const buyerSession = await this.userSessionService.getSession(phoneNumber);
-  if (!buyerSession) {
+    // Start shop creation flow
+    await this.userSessionService.updateSession(phoneNumber, {
+      currentFlow: this.FLOWS.SHOP_NAME_INPUT,
+      userData: { ...userSession.userData, shopCreation: {} }
+    });
+
     await this.whatsappService.sendMessage(
       phoneNumber,
-      '❌ Unable to retrieve your session. Please try again.'
+      `🏪 *Create Your Shop*
+
+Let's set up your shop! I'll guide you through the process.
+
+*Step 1 of 4: Shop Name*
+
+Please enter your shop name (2-50 characters):
+
+Example: "Maria's Fresh Produce" or "Tech Repair Hub"
+
+Type "cancel" to return to the menu.`
     );
-    return;
+
+  } catch (error) {
+    logger.error({ error }, 'Error initiating shop creation');
+    await this.whatsappService.sendErrorMessage(phoneNumber, 'Could not start shop creation. Please try again.');
   }
-  return await this.initializeBuyerFlow(phoneNumber, buyerSession);
 }
+
+async handleShopCreationFlow(phoneNumber: string, message: string, userSession: UserSession): Promise<void> {
+  if (message === 'cancel') {
+    await this.whatsappService.sendMessage(phoneNumber, '❌ Shop creation cancelled.');
+    return await this.showSellerMenu(phoneNumber, userSession);
   }
 
+  try {
+    switch (userSession.currentFlow) {
+      case this.FLOWS.SHOP_NAME_INPUT:
+        return await this.handleShopNameInput(phoneNumber, message, userSession);
+      
+      case this.FLOWS.SHOP_DESCRIPTION_INPUT:
+        return await this.handleShopDescriptionInput(phoneNumber, message, userSession);
+      
+      case this.FLOWS.SHOP_CATEGORY_SELECT:
+        return await this.handleShopCategorySelect(phoneNumber, message, userSession);
+      
+      case this.FLOWS.SHOP_CONFIRMATION:
+        return await this.handleShopConfirmation(phoneNumber, message, userSession);
+    }
+  } catch (error) {
+    logger.error({ error }, 'Error in shop creation flow');
+    await this.whatsappService.sendErrorMessage(phoneNumber, 'Something went wrong. Please try again.');
+    return await this.showSellerMenu(phoneNumber, userSession);
+  }
+}
 
-  private async handleCommunitySelectionText(phoneNumber: string, message: string, userSession: UserSession): Promise<void> {
-    const communityMap: Record<string, string> = {
-      'bameka': 'BAMEKA', '1': 'BAMEKA',
-      'batoufam': 'BATOUFAM', '2': 'BATOUFAM',
-      'fondjomekwet': 'FONDJOMEKWET', 'fondjo': 'FONDJOMEKWET', '3': 'FONDJOMEKWET'
+async handleShopNameInput(phoneNumber: string, name: string, userSession: UserSession): Promise<void> {
+  // Validate name
+  if (name.trim().length < 2) {
+    await this.whatsappService.sendMessage(
+      phoneNumber,
+      '❌ Shop name too short. Please enter at least 2 characters.'
+    );
+  }
+
+  if (name.trim().length > 50) {
+  await this.whatsappService.sendMessage(
+      phoneNumber,
+      '❌ Shop name too long. Please keep it under 50 characters.'
+    );
+  }
+
+  // Check if name is taken in community
+  const nameTaken = await shopService.isShopNameTaken(name.trim(), userSession.community!);
+  if (nameTaken) {
+    await this.whatsappService.sendMessage(
+      phoneNumber,
+      `❌ Shop name "${name.trim()}" is already taken in ${userSession.userData.communityDisplayName}. Please choose a different name.`
+    );
+  }
+
+  // Save name and move to description
+  await this.userSessionService.updateSession(phoneNumber, {
+    currentFlow: this.FLOWS.SHOP_DESCRIPTION_INPUT,
+    userData: {
+      ...userSession.userData,
+      shopCreation: { ...userSession.userData.shopCreation, name: name.trim() }
+    }
+  });
+
+  await this.whatsappService.sendMessage(
+    phoneNumber,
+    `✅ Great! Shop name: *${name.trim()}*
+
+*Step 2 of 4: Shop Description*
+
+Please describe your shop and what you sell (10-200 characters):
+
+Example: "Fresh vegetables, fruits, and local produce. Open daily 8AM-6PM with home delivery available."
+
+Type "back" to change the shop name.`
+  );
+}
+
+async handleShopDescriptionInput(phoneNumber: string, description: string, userSession: UserSession): Promise<void> {
+  if (description === 'back') {
+    await this.userSessionService.updateSession(phoneNumber, {
+      currentFlow: this.FLOWS.SHOP_NAME_INPUT
+    });
+     await this.whatsappService.sendMessage(
+      phoneNumber,
+      '⬅️ Back to shop name. Please enter your shop name:'
+    );
+  }
+
+  // Validate description
+  if (description.trim().length < 10) {
+    await this.whatsappService.sendMessage(
+      phoneNumber,
+      '❌ Description too short. Please enter at least 10 characters.'
+    );
+  }
+
+  if (description.trim().length > 200) {
+     await this.whatsappService.sendMessage(
+      phoneNumber,
+      '❌ Description too long. Please keep it under 200 characters.'
+    );
+  }
+
+  // Save description and move to category selection
+  await this.userSessionService.updateSession(phoneNumber, {
+    currentFlow: this.FLOWS.SHOP_CATEGORY_SELECT,
+    userData: {
+      ...userSession.userData,
+      shopCreation: { 
+        ...userSession.userData.shopCreation, 
+        description: description.trim() 
+      }
+    }
+  });
+
+  // Show category selection
+  const categories = shopService.getShopCategories();
+  const categoryList = categories
+    .map((cat, index) => `${index + 1}️⃣ ${cat}`)
+    .join('\n');
+
+  await this.whatsappService.sendMessage(
+    phoneNumber,
+    `✅ Description saved!
+
+*Step 3 of 4: Shop Category*
+
+Please select your shop category:
+
+${categoryList}
+
+Type "back" to change description.`
+  );
+}
+
+async handleShopCategorySelect(phoneNumber: string, input: string, userSession: UserSession): Promise<void> {
+  if (input === 'back') {
+    await this.userSessionService.updateSession(phoneNumber, {
+      currentFlow: this.FLOWS.SHOP_DESCRIPTION_INPUT
+    });
+    await this.whatsappService.sendMessage(
+      phoneNumber,
+      '⬅️ Back to description. Please enter your shop description:'
+    );
+  }
+
+  const categories = shopService.getShopCategories();
+  let selectedCategory: string | null = null;
+
+  // Handle numeric input
+  const categoryIndex = parseInt(input) - 1;
+  if (categoryIndex >= 0 && categoryIndex < categories.length) {
+    selectedCategory = categories[categoryIndex];
+  }
+
+  if (!selectedCategory) {
+    const categoryList = categories
+      .map((cat, index) => `${index + 1}️⃣ ${cat}`)
+      .join('\n');
+    
+     await this.whatsappService.sendMessage(
+      phoneNumber,
+      `❌ Invalid selection. Please choose a number 1-${categories.length}:\n\n${categoryList}`
+    );
+  }
+
+  // Save category and show confirmation
+  const updatedShopData = {
+    ...userSession.userData.shopCreation,
+    category: selectedCategory
+  };
+
+  await this.userSessionService.updateSession(phoneNumber, {
+    currentFlow: this.FLOWS.SHOP_CONFIRMATION,
+    userData: {
+      ...userSession.userData,
+      shopCreation: updatedShopData
+    }
+  });
+
+  // Show confirmation
+  await this.whatsappService.sendMessage(
+    phoneNumber,
+    `*Step 4 of 4: Confirmation*
+
+Please review your shop details:
+
+🏪 *Shop Name:* ${updatedShopData.name}
+📝 *Description:* ${updatedShopData.description}
+🏷️ *Category:* ${selectedCategory}
+🏘️ *Community:* ${userSession.userData.communityDisplayName}
+
+1️⃣ ✅ Create Shop
+2️⃣ ⬅️ Go Back
+3️⃣ ❌ Cancel
+
+Type your choice:`
+  );
+}
+
+async handleShopConfirmation(phoneNumber: string, choice: string, userSession: UserSession): Promise<void> {
+  switch (choice) {
+    case '1':
+      return await this.createShopFinal(phoneNumber, userSession);
+    
+    case '2':
+      await this.userSessionService.updateSession(phoneNumber, {
+        currentFlow: this.FLOWS.SHOP_CATEGORY_SELECT
+      });
+      await this.whatsappService.sendMessage(
+        phoneNumber,
+        '⬅️ Back to category selection. Please choose your shop category:'
+      );
+    
+    case '3':
+      await this.whatsappService.sendMessage(phoneNumber, '❌ Shop creation cancelled.');
+      return await this.showSellerMenu(phoneNumber, userSession);
+    
+    default:
+      await this.whatsappService.sendMessage(
+        phoneNumber,
+        '❌ Invalid choice. Please select:\n1️⃣ Create Shop\n2️⃣ Go Back\n3️⃣ Cancel'
+      );
+  }
+}
+
+async createShopFinal(phoneNumber: string, userSession: UserSession): Promise<void> {
+  try {
+    await this.whatsappService.sendProcessingMessage(phoneNumber, 'creating your shop');
+
+    const shopData: CreateShopData = {
+      name: userSession.userData.shopCreation.name,
+      description: userSession.userData.shopCreation.description,
+      category: userSession.userData.shopCreation.category,
+      owner_phone: phoneNumber,
+      community: userSession.community!
     };
 
-    const selectedCommunity = communityMap[message];
-    if (selectedCommunity) {
-      return await this.handleCommunitySelection(phoneNumber, userSession, selectedCommunity);
+    const newShop = await shopService.createShop(shopData);
+
+    // Clear shop creation data and return to seller menu
+    await this.userSessionService.updateSession(phoneNumber, {
+      currentFlow: this.FLOWS.SELLER_MENU,
+      userData: {
+        ...userSession.userData,
+        shopCreation: undefined,
+        shopId: newShop.id
+      }
+    });
+
+    await this.whatsappService.sendSuccessMessage(
+      phoneNumber,
+      `🎉 Congratulations! Your shop "${newShop.name}" has been created successfully!`,
+      'You can now manage your shop, add products, and start selling to your community.'
+    );
+
+    // Show seller menu
+    setTimeout(() => this.showSellerMenu(phoneNumber, userSession), 2000);
+
+  } catch (error) {
+    logger.error({ error }, 'Error creating shop final step');
+    
+    if (error instanceof ShopServiceError) {
+      await this.whatsappService.sendErrorMessage(phoneNumber, error.message);
     } else {
-      await this.whatsappService.sendMessage(phoneNumber, '❌ Invalid selection. Please choose from:\n1️⃣ BAMEKA\n2️⃣ BATOUFAM\n3️⃣ FONDJOMEKWET\n\nOr use the buttons above.');
+      await this.whatsappService.sendErrorMessage(phoneNumber, 'Failed to create shop. Please try again.');
     }
+    
+    return await this.showSellerMenu(phoneNumber, userSession);
   }
+}
 
-  /** -------------------- SELLER & BUYER FLOWS -------------------- */
-  private async initializeSellerFlow(phoneNumber: string, userSession: UserSession): Promise<void> {
+async handleManageShop(phoneNumber: string, userSession: UserSession): Promise<void> {
+  try {
+    const shop = await shopService.getShopByOwner(phoneNumber);
+    
+    if (!shop) {
+      await this.whatsappService.sendMessage(
+        phoneNumber,
+        '❌ You don\'t have a shop yet. Please create one first by selecting option 1.'
+      );
+      return await this.showSellerMenu(phoneNumber, userSession);
+    }
+
+    await this.whatsappService.sendMessage(
+      phoneNumber,
+      `🏪 *${shop.name}*
+📝 ${shop.description}
+🏷️ Category: ${shop.category}
+📊 Status: ${shop.status}
+
+*Shop Management:*
+1️⃣ 📦 Add Products
+2️⃣ 📋 View Products  
+3️⃣ 📊 View Orders
+4️⃣ ⚙️ Shop Settings
+0️⃣ 🏠 Back to Menu
+
+Shop management features coming soon!`
+    );
+
+  } catch (error) {
+    logger.error({ error }, 'Error in manage shop');
+    await this.whatsappService.sendErrorMessage(phoneNumber, 'Could not load shop information.');
+  }
+}
+
+  /** -------------------- BUYER MENU -------------------- */
+  private async showBuyerMenu(phoneNumber: string, userSession: UserSession): Promise<void> {
     const community = userSession.userData?.communityDisplayName || 'your community';
+    const menuText = `🛒 Welcome, ${community} Buyer!
 
-    const welcomeText = `🏪 Welcome, ${community} Seller!
+What would you like to do?
+1️⃣ 🏪 Browse Shops
+2️⃣ 📦 View Products  
+3️⃣ 🛒 My Cart
+4️⃣ 📋 My Orders
+0️⃣ 🏠 Main Menu
 
-Let's set up your marketplace presence in your community. You can:
-• Create and manage your shop
-• Add and manage products  
-• Track orders and sales within ${community}
-• Set up payment methods
-• Configure EOS blockchain integration
+Reply with the number of your choice.`;
 
-Your products will only be visible to buyers from ${community}.
-
-Choose an option to get started:`;
-
-    const buttons: ButtonOption[] = [
-      { id: 'create_shop', title: '🏪 Create Shop' },
-      { id: 'manage_shop', title: '⚙️ Manage Shop' },
-      { id: 'setup_payments', title: '💳 Setup Payments' },
-      { id: 'create_eos_account', title: '🔗 EOS Account' },
-    ];
-
-    await this.whatsappService.sendButtonMessage(phoneNumber, welcomeText, buttons);
+    await this.whatsappService.sendMessage(phoneNumber, menuText);
   }
 
-  private async initializeBuyerFlow(phoneNumber: string, userSession: UserSession): Promise<void> {
-    const community = userSession.userData?.communityDisplayName || 'your community';
-
-    const welcomeText = `🛒 Welcome, ${community} Buyer!
-
-Explore your local marketplace! You can:
-• Browse shops in ${community}
-• View products from local sellers
-• Add items to your cart
-• Pay using your ${userSession.userData?.communityVoucher}
-
-You can only purchase from sellers in ${community}.
-
-What would you like to do?`;
-
-    const buttons: ButtonOption[] = [
-      { id: 'browse_shops', title: '🏪 Browse Shops' },
-      { id: 'view_products', title: '📦 View Products' },
-      { id: 'checkout', title: '🛒 My Cart' },
-      { id: 'back_to_main', title: '🏠 Main Menu' },
-    ];
-
-    await this.whatsappService.sendButtonMessage(phoneNumber, welcomeText, buttons);
-  }
-
-  /** -------------------- COMMUNITY MARKETPLACE -------------------- */
- /* private async showCommunityShopBrowser(phoneNumber: string, userSession: UserSession): Promise<void> {
-    try {
-      const userCommunity = userSession.community!;
-      const communityShops: Shop[] = await this.shopService.getShopsByCommunity(userCommunity);
-
-      if (!communityShops.length) {
-        return await this.whatsappService.sendMessage(phoneNumber, `😔 No shops found in ${userSession.userData?.communityDisplayName} yet.\n\nBe the first to create a shop or check back later!`);
-      }
-
-      const shopList: ListRow[] = communityShops.map((shop, idx) => ({
-        id: `shop_${shop.id}`,
-        title: shop.name,
-        description: `${shop.description?.substring(0, 60) || 'Local shop'}... | Products: ${shop.productCount || 0}`,
-      }));
-
-      const listMessage: ListMessage = {
-        text: `🏪 Shops in ${userSession.userData?.communityDisplayName}:\n\nSelect a shop to explore:`,
-        buttonText: 'Select Shop',
-        sections: [{ title: 'Available Shops', rows: shopList }],
-      };
-
-      return await this.whatsappService.sendListMessage(phoneNumber, listMessage);
-    } catch (error) {
-      logger.error('Error showing community shop browser:', error);
-      throw new BotServiceError('Failed to load community shops', { cause: error });
+  private async handleBuyerMenuInput(phoneNumber: string, message: string, userSession: UserSession): Promise<void> {
+    switch (message) {
+      case '1':
+        await this.whatsappService.sendMessage(phoneNumber, '🏪 Browse Shops feature coming soon!');
+        return await this.showBuyerMenu(phoneNumber, userSession);
+      
+      case '2':
+        await this.whatsappService.sendMessage(phoneNumber, '📦 View Products feature coming soon!');
+        return await this.showBuyerMenu(phoneNumber, userSession);
+      
+      case '3':
+        await this.whatsappService.sendMessage(phoneNumber, '🛒 My Cart feature coming soon!');
+        return await this.showBuyerMenu(phoneNumber, userSession);
+      
+      case '4':
+        await this.whatsappService.sendMessage(phoneNumber, '📋 My Orders feature coming soon!');
+        return await this.showBuyerMenu(phoneNumber, userSession);
+      
+      case '0':
+        return await this.showMainMenu(phoneNumber);
+      
+      default:
+        await this.whatsappService.sendMessage(
+          phoneNumber,
+          '❌ Invalid option. Please choose:\n1️⃣ Browse Shops\n2️⃣ View Products\n3️⃣ My Cart\n4️⃣ My Orders\n0️⃣ Main Menu'
+        );
+        return await this.showBuyerMenu(phoneNumber, userSession);
     }
   }
 
-  private async showCommunityProductCatalog(phoneNumber: string, userSession: UserSession): Promise<void> {
-    try {
-      const community = userSession.community!;
-      const products: Product[] = await this.shopService.getProductsByCommunity(community);
-
-      if (!products.length) {
-        return await this.whatsappService.sendMessage(phoneNumber, `😔 No products found in ${userSession.userData?.communityDisplayName} yet.`);
-      }
-
-      const productList: ListRow[] = products.map(p => ({
-        id: `product_${p.id}`,
-        title: p.name,
-        description: `💰 ${p.price} ${userSession.communityVoucher} | Stock: ${p.stock}`,
-      }));
-
-      const listMessage: ListMessage = {
-        text: `📦 Products available in ${userSession.userData?.communityDisplayName}:`,
-        buttonText: 'View Products',
-        sections: [{ title: 'Products', rows: productList }],
-      };
-
-      return await this.whatsappService.sendListMessage(phoneNumber, listMessage);
-    } catch (error) {
-      logger.error('Error showing product catalog:', error);
-      throw new BotServiceError('Failed to load products', { cause: error });
-    }
-  }
-
-  /** -------------------- CART & CHECKOUT -------------------- */
- /* private async handleAddToCart(phoneNumber: string, userSession: UserSession, interactive: Interactive): Promise<void> {
-    try {
-      const productId = interactive.listReply?.id.split('_')[1];
-      if (!productId) return;
-
-      const product = await this.shopService.getProductById(productId);
-      if (!product) return await this.whatsappService.sendMessage(phoneNumber, '❌ Product not found.');
-
-      await this.orderService.addToCart(phoneNumber, product, 1);
-      return await this.whatsappService.sendMessage(phoneNumber, `✅ ${product.name} added to your cart.`);
-    } catch (error) {
-      logger.error('Error adding product to cart:', error);
-      throw new BotServiceError('Failed to add product to cart', { cause: error });
-    }
-  }
-
-  private async initializeCheckout(phoneNumber: string, userSession: UserSession): Promise<void> {
-    try {
-      const cartItems: CartItem[] = await this.orderService.getCart(phoneNumber);
-      if (!cartItems.length) return await this.whatsappService.sendMessage(phoneNumber, '🛒 Your cart is empty.');
-
-      let cartSummary = `🛒 Checkout Summary:\n\n`;
-      let total = 0;
-      cartItems.forEach(item => {
-        cartSummary += `• ${item.product.name} x${item.quantity} = ${item.product.price * item.quantity} ${userSession.communityVoucher}\n`;
-        total += item.product.price * item.quantity;
-      });
-      cartSummary += `\nTotal: ${total} ${userSession.userData?.communityVoucher}`;
-
-      const buttons: ButtonOption[] = [
-        { id: 'checkout_confirm', title: '✅ Confirm Payment' },
-        { id: 'back', title: '⬅️ Back' },
-      ];
-
-      await this.whatsappService.sendButtonMessage(phoneNumber, cartSummary, buttons);
-    } catch (error) {
-      logger.error('Error initializing checkout:', error);
-      throw new BotServiceError('Failed to initialize checkout', { cause: error });
-    }
-  }
-
-  /** -------------------- UTILITY -------------------- */
-  private isGlobalCommand(message: string): boolean {
-    return ['help', 'menu', 'start'].includes(message);
-  }
-
-  private async handleGlobalCommand(phoneNumber: string, message: string, userSession: UserSession): Promise<void> {
-    if (message === 'menu' || message === 'start') {
-      return await this.showMainMenu(phoneNumber);
-    }
-    if (message === 'help') {
-      await this.whatsappService.sendMessage(phoneNumber, 'ℹ️ Help Menu:\n• Type "menu" to go to main menu\n• Use the buttons to navigate');
-    }
-  }
-
+  /** -------------------- MENU & UTILITIES -------------------- */
   private async showMainMenu(phoneNumber: string): Promise<void> {
-    const buttons: ButtonOption[] = [
-      { id: 'seller_register', title: '🏪 Seller' },
-      { id: 'buyer_browse', title: '🛒 Buyer' },
-    ];
+    // Update user session to main menu flow
+    await this.userSessionService.updateSession(phoneNumber, {
+      currentFlow: this.FLOWS.MAIN_MENU
+    });
 
-    await this.whatsappService.sendButtonMessage(phoneNumber, '🏠 Main Menu: Choose your role', buttons);
+    const menuText = `🏠 *Community Marketplace*
+
+Choose your role:
+1️⃣ 🏪 Seller
+2️⃣ 🛒 Buyer
+
+Reply with the number of your choice.
+Type "help" for assistance.`;
+
+    await this.whatsappService.sendMessage(phoneNumber, menuText);
   }
 
   private async handleUnknownResponse(phoneNumber: string): Promise<void> {
-    await this.whatsappService.sendMessage(phoneNumber, '❌ Unknown selection. Please choose a valid option.');
+    await this.whatsappService.sendMessage(
+      phoneNumber, 
+      '❌ Unknown selection. Please choose a valid option or type "0" for main menu.'
+    );
   }
 
-  private async handleBackNavigation(phoneNumber: string, userSession: UserSession): Promise<void> {
-    return await this.showMainMenu(phoneNumber);
+  // Keep old methods for backward compatibility
+  private async initializeSellerFlow(phoneNumber: string, userSession: UserSession): Promise<void> {
+    return await this.showSellerMenu(phoneNumber, userSession);
   }
-  
 
-  // -------------------- PLACEHOLDER METHODS --------------------
-  // These should be implemented similarly with proper typing
-  private async handleSellerRegistrationInput(phoneNumber: string, message: string, userSession: UserSession) { /* ... */ }
-  private async handleBuyerRegistrationInput(phoneNumber: string, message: string, userSession: UserSession) { /* ... */ }
-  private async handleShopManagementInput(phoneNumber: string, message: string, userSession: UserSession) { /* ... */ }
-  private async handleProductManagementInput(phoneNumber: string, message: string, userSession: UserSession) { /* ... */ }
-  private async handlePaymentSetupInput(phoneNumber: string, message: string, userSession: UserSession) { /* ... */ }
-  private async handleBlockchainSetupInput(phoneNumber: string, message: string, userSession: UserSession) { /* ... */ }
-  private async handleCheckoutInput(phoneNumber: string, message: string, userSession: UserSession) { /* ... */ }
+  private async initializeBuyerFlow(phoneNumber: string, userSession: UserSession): Promise<void> {
+    return await this.showBuyerMenu(phoneNumber, userSession);
+  }
 
-  private async handleShopCreation(phoneNumber: string, userSession: UserSession) { /* ... */ }
-  private async showShopManagement(phoneNumber: string, userSession: UserSession) { /* ... */ }
-  private async showShopStatistics(phoneNumber: string, userSession: UserSession) { /* ... */ }
-  private async initializeProductAddition(phoneNumber: string, userSession: UserSession) { /* ... */ }
-  private async showProductManagement(phoneNumber: string, userSession: UserSession) { /* ... */ }
-  private async showOrderManagement(phoneNumber: string, userSession: UserSession) { /* ... */ }
-  private async showOrderDetails(phoneNumber: string, userSession: UserSession) { /* ... */ }
-  private async handleOrderStatusUpdate(phoneNumber: string, userSession: UserSession) { /* ... */ }
-  private async initializePaymentSetup(phoneNumber: string, userSession: UserSession) { /* ... */ }
-  private async handleMobileMoneySetup(phoneNumber: string, userSession: UserSession) { /* ... */ }
-  private async handleCryptoSetup(phoneNumber: string, userSession: UserSession) { /* ... */ }
-  private async handleEOSAccountCreation(phoneNumber: string, userSession: UserSession) { /* ... */ }
-  private async handleEOSBalanceCheck(phoneNumber: string, userSession: UserSession) { /* ... */ }
-  private async handleEOSTransaction(phoneNumber: string, userSession: UserSession) { /* ... */ }
-
+  // Remove unused text handling method
+  private async handleCommunitySelectionText(phoneNumber: string, message: string, userSession: UserSession): Promise<void> {
+    return await this.handleCommunitySelectionInput(phoneNumber, message, userSession);
+  }
 }
 
-export default BotService;
+const botService = new BotService();
+export { BotService, botService };

@@ -3,9 +3,7 @@ import { z } from "zod";
 
 export const env = createEnv({
   server: {
-    NODE_ENV: z
-      .enum(["development", "test", "production"])
-      .default("development"),
+    NODE_ENV: z.enum(["development", "test", "production"]),
     PORT: z.coerce.number().int().min(1).max(65535).default(8080),
     LOG_LEVEL: z
       .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
@@ -14,9 +12,10 @@ export const env = createEnv({
     CORS_ORIGINS: z.string().optional(),
     SUPABASE_URL: z.url(),
     SUPABASE_KEY: z.string(),
-    TWILIO_ACCOUNT_SID: z.string(),
+    TWILIO_ACCOUNT_ID: z.string(),
     TWILIO_AUTH_TOKEN: z.string(),
-    TWILIO_WHATSAPP_NUMBER: z.string(), // e.g., "whatsapp:+14155238886"
+    TWILIO_WHATSAPP_NUMBER: z.string(),
+    TWILIO_CONTENT_SID: z.string().optional(),
   },
   runtimeEnv: process.env,
   emptyStringAsUndefined: true,
