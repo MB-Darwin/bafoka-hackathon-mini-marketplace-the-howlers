@@ -93,8 +93,8 @@ export class WhatsAppService implements IWhatsAppService {
     try {
       const response = await this.client.messages.create({
         from: this.from,
-        to: toAddr,
-        body: msg,
+        to,
+        body,
         statusCallback: opts?.statusCallbackUrl,
       });
       logger.info(`[WhatsApp] Message sent to ${toAddr} sid=${response.sid}`);
@@ -123,7 +123,9 @@ export class WhatsAppService implements IWhatsAppService {
     }
 
     if (buttons.length > 9) {
-      throw new WhatsAppServiceError("Maximum 9 buttons supported for numbered menu");
+      throw new WhatsAppServiceError(
+        "Maximum 9 buttons supported for numbered menu"
+      );
     }
 
     // Create numbered options from buttons
@@ -137,7 +139,7 @@ export class WhatsAppService implements IWhatsAppService {
 
     // Add zero option for going back (common pattern)
     const backOption = "0️⃣ 🏠 Main Menu";
-    
+
     // Format the complete message
     const message = [
       ensureNonEmpty(text, "text"),
@@ -145,7 +147,7 @@ export class WhatsAppService implements IWhatsAppService {
       options,
       backOption,
       "",
-      "Reply with the number of your choice."
+      "Reply with the number of your choice.",
     ].join("\n");
 
     return this.sendMessage(to, message, opts);
@@ -166,7 +168,9 @@ export class WhatsAppService implements IWhatsAppService {
     }
 
     if (options.length > 9) {
-      throw new WhatsAppServiceError("Maximum 9 options supported for numbered menu");
+      throw new WhatsAppServiceError(
+        "Maximum 9 options supported for numbered menu"
+      );
     }
 
     // Create numbered options
@@ -179,7 +183,7 @@ export class WhatsAppService implements IWhatsAppService {
 
     // Build message parts
     const messageParts = [ensureNonEmpty(title, "title"), "", numberedOptions];
-    
+
     // Add footer if provided
     if (footer) {
       messageParts.push("", footer);
@@ -205,12 +209,14 @@ export class WhatsAppService implements IWhatsAppService {
 
     sections.forEach((section: ListSection, sIdx: number) => {
       assertString(section.title, `sections[${sIdx}].title`);
-      
+
       // Format section title with emoji
       msg += `📋 *${section.title}*\n`;
 
       if (!Array.isArray(section.rows) || section.rows.length === 0) {
-        throw new WhatsAppServiceError(`sections[${sIdx}].rows must be a non-empty array`);
+        throw new WhatsAppServiceError(
+          `sections[${sIdx}].rows must be a non-empty array`
+        );
       }
 
       section.rows.forEach((row: ListRow, rIdx: number) => {
@@ -245,11 +251,15 @@ export class WhatsAppService implements IWhatsAppService {
         mediaUrl: [mediaUrl],
         statusCallback: opts?.statusCallbackUrl,
       });
-      logger.info(`[WhatsApp] Media message sent to ${toAddr} sid=${response.sid}`);
+      logger.info(
+        `[WhatsApp] Media message sent to ${toAddr} sid=${response.sid}`
+      );
       return response;
     } catch (err) {
       const error = toWhatsAppServiceError(err, "sendMediaMessage");
-      logger.error(`[WhatsApp] Failed to send media message to ${toAddr} - ${error.message}`);
+      logger.error(
+        `[WhatsApp] Failed to send media message to ${toAddr} - ${error.message}`
+      );
       throw error;
     }
   }
@@ -273,11 +283,15 @@ export class WhatsAppService implements IWhatsAppService {
         contentVariables,
         statusCallback: opts?.statusCallbackUrl,
       });
-      logger.info(`[WhatsApp] Template message sent to ${toAddr} sid=${response.sid}`);
+      logger.info(
+        `[WhatsApp] Template message sent to ${toAddr} sid=${response.sid}`
+      );
       return response;
     } catch (err) {
       const error = toWhatsAppServiceError(err, "sendTemplateMessage");
-      logger.error(`[WhatsApp] Failed to send template message to ${toAddr} - ${error.message}`);
+      logger.error(
+        `[WhatsApp] Failed to send template message to ${toAddr} - ${error.message}`
+      );
       throw error;
     }
   }
@@ -292,7 +306,7 @@ export class WhatsAppService implements IWhatsAppService {
     opts?: SendOptions
   ): Promise<MessageInstance> {
     let message = `❌ ${errorText}`;
-    
+
     if (includeHelp) {
       message += "\n\nType '0' for main menu or 'help' for assistance.";
     }
@@ -310,7 +324,7 @@ export class WhatsAppService implements IWhatsAppService {
     opts?: SendOptions
   ): Promise<MessageInstance> {
     let message = `✅ ${successText}`;
-    
+
     if (nextStep) {
       message += `\n\n${nextStep}`;
     }
@@ -355,11 +369,14 @@ function normalizeE164(input: string): string {
 
   if (!s.startsWith("+")) {
     if (/^\d{7,15}$/.test(s)) s = `+${s}`;
-    else throw new WhatsAppServiceError(`Invalid phone number format: "${input}"`);
+    else
+      throw new WhatsAppServiceError(`Invalid phone number format: "${input}"`);
   }
 
   if (!/^\+[1-9]\d{1,14}$/.test(s)) {
-    throw new WhatsAppServiceError(`Phone number must be E.164 (e.g. +14155552671). Got "${input}"`);
+    throw new WhatsAppServiceError(
+      `Phone number must be E.164 (e.g. +14155552671). Got "${input}"`
+    );
   }
 
   return s;
@@ -370,11 +387,19 @@ function ensureWhatsAppAddress(input: string): string {
   return `whatsapp:${e164}`;
 }
 
-function toWhatsAppServiceError(err: unknown, ctx: string): WhatsAppServiceError {
+function toWhatsAppServiceError(
+  err: unknown,
+  ctx: string
+): WhatsAppServiceError {
   const fallback = new WhatsAppServiceError(`Failed to ${ctx}`, { cause: err });
   if (!err || typeof err !== "object") return fallback;
 
-  const anyErr = err as { message?: string; code?: number | string; status?: number; moreInfo?: string };
+  const anyErr = err as {
+    message?: string;
+    code?: number | string;
+    status?: number;
+    moreInfo?: string;
+  };
   return new WhatsAppServiceError(`${anyErr.message ?? fallback.message}`, {
     code: anyErr.code,
     status: anyErr.status,

@@ -69,10 +69,11 @@ export class UserSessionService implements IUserSessionService {
   private readonly sessions: Map<string, UserSession>;
   private readonly sessionTimeout: number;
 
-  constructor(sessionTimeoutMs: number = 30 * 60 * 1000) { // 30 minutes default
+  constructor(sessionTimeoutMs: number = 30 * 60 * 1000) {
+    // 30 minutes default
     this.sessions = new Map();
     this.sessionTimeout = sessionTimeoutMs;
-    
+
     // Start cleanup interval
     this.startCleanupInterval();
   }
@@ -81,7 +82,7 @@ export class UserSessionService implements IUserSessionService {
     assertValidPhoneNumber(phoneNumber);
     
     let session = this.sessions.get(phoneNumber);
-    
+
     if (session) {
       const now = Date.now();
       

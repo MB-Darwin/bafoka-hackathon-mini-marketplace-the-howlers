@@ -6,13 +6,9 @@ import pinoHttp from "pino-http";
 import { env } from "../configs/env.ts";
 import logger from "../utils/logger.ts";
 import twilio from "twilio";
-import { WhatsAppService } from "../services/whatsapp.service.ts";
 import { whatsappRouter } from "../routes/webhook.ts";
 
-
 const app = express();
-
-
 
 app.use(express.urlencoded({ extended: false }));
 
@@ -26,10 +22,14 @@ app.use(pinoHttp({ logger }));
 app.use(helmet());
 app.use(compression());
 app.use(express.urlencoded({ extended: true }));
-app.use("/webhook/whatsapp",   twilio.webhook({
+app.use(
+  "/webhook/whatsapp",
+  twilio.webhook({
     validate: env.NODE_ENV === "production",
     protocol: "https", // or rely on trust proxy
-  }), whatsappRouter);
+  }),
+  whatsappRouter
+);
 app.use(
   cors({
     origin: (origin, cb) => {
