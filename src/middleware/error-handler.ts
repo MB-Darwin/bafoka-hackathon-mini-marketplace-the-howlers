@@ -1,3 +1,5 @@
+import e from "express";
+
 export class WhatsAppServiceError extends Error {
   code?: number | string;
   status?: number;
@@ -22,3 +24,33 @@ export class WhatsAppServiceError extends Error {
     }
   }
 }
+
+export class BotServiceError extends Error {
+  public cause?: unknown;
+
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.name = 'BotServiceError';
+    if (options?.cause) {
+      this.cause = options.cause;
+    }
+    Error.captureStackTrace?.(this, BotServiceError);
+  }
+}
+
+class ShopServiceError extends Error {
+  public cause?: unknown;
+
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.name = 'BotServiceError';
+    if (options?.cause) {
+      this.cause = options.cause;
+    }
+    Error.captureStackTrace?.(this, BotServiceError);
+  }
+}
+
+export { ShopServiceError };
+
+// ...existing error classes...

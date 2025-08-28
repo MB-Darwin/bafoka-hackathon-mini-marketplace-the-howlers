@@ -7,18 +7,29 @@ import { env } from "../configs/env.ts";
 import logger from "../utils/logger.ts";
 import twilio from "twilio";
 import { WhatsAppService } from "../services/whatsapp.service.ts";
+import { whatsappRouter } from "../routes/webhook.ts";
+
 
 const app = express();
+
+
+
+app.use(express.urlencoded({ extended: false }));
+
 app.set("trust proxy", true); // behind ngrok/proxies helps with protocol
 
 // Now mount parsers for the rest of your app
 app.use(express.json({ limit: "1mb" }));
-app.use(express.urlencoded({ extended: true }));
 
 // logging, security, cors
 app.use(pinoHttp({ logger }));
 app.use(helmet());
 app.use(compression());
+app.use(express.urlencoded({ extended: true }));
+app.use("/webhook/whatsapp",   twilio.webhook({
+    validate: env.NODE_ENV === "production",
+    protocol: "https", // or rely on trust proxy
+  }), whatsappRouter);
 app.use(
   cors({
     origin: (origin, cb) => {
@@ -47,6 +58,7 @@ app.get("/", (_req, res) => {
   res.json({ message: "Hello from Express!" });
 });
 
+/*
 app.post(
   "/webhooks/whatsapp",
   // express.urlencoded({ extended: false }),
@@ -70,7 +82,7 @@ app.post(
 
     res.json({ message: "Template sent", sid: template.sid });
   }
-);
+);*/
 
 // 404 + error handler as you had
 app.use((_req, res) => {
